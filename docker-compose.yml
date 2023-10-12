@@ -64,22 +64,22 @@ services:
 
 ### MEDIA ###
 
-# Jellyfin - Media Server
-jellyfin:
-  image: jellyfin/jellyfin:latest
-  container_name: jellyfin
-  restart: unless-stopped
-  networks:
-    - jellyfinhost
-  devices:
-    - /dev/dri:/dev/dri # for hardware transcoding
-  ports:
-    - "8096:8096" # HTTP Port
-    # - "8920:8920" # Requires valid certificates.
-  volumes:
-    - $DATADIR/jellyfin/appdata/jellyfin:/config
-    - $DATADIR/jellyfin/media:/data/media:ro # Add :ro at the end to make it read-only
-    - /dev/shm:/data/transcode # Offload transcoding to RAM if you have enough RAM
+  # Jellyfin - Media Server
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    networks:
+      - jellyfinhost
+    devices:
+      - /dev/dri:/dev/dri # for hardware transcoding
+    ports:
+      - "8096:8096" # HTTP Port
+      # - "8920:8920" # Requires valid certificates.
+    volumes:
+      - $DATADIR/jellyfin/appdata/jellyfin:/config
+      - $DATADIR/jellyfin/media:/data/media:ro # Add :ro at the end to make it read-only
+      - /dev/shm:/data/transcode # Offload transcoding to RAM if you have enough RAM
 
 
 ### SMARTHOME ###
