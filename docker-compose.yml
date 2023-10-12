@@ -1,7 +1,7 @@
 version: "3"
 
 networks:
-  jellyfin-host:
+  jellyfinhost:
     driver: bridge
 
 # a couple of services for your smarthome, remember to set up your .env file first
@@ -70,7 +70,7 @@ jellyfin:
   container_name: jellyfin
   restart: unless-stopped
   networks:
-    - default
+    - jellyfinhost
   devices:
     - /dev/dri:/dev/dri # for hardware transcoding
   ports:
