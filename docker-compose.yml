@@ -1,0 +1,253 @@
+version: "3"
+
+# a couple of services for your smarthome, remember to set up your .env file first
+services:
+  mosquitto:
+    image: "eclipse-mosquitto:1.6"
+    restart: unless-stopped
+    volumes:
+      - "${DATADIR}/mosquitto/config:/mosquitto/config"
+      - "${DATADIR}/mosquitto/data:/mosquitto/data"
+      - "${DATADIR}/mosquitto/log:/mosquitto/log"
+    ports:
+      - 1883:1883
+
+  grafana:
+    image: "grafana/grafana:latest"
+    restart: unless-stopped
+    user: "1000:999"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - "${DATADIR}/grafana/data:/var/lib/grafana"
+    ports:
+      - 3000:3000
+    # uncomment this if you wanta to allow anonymus acces to Grafana for embedding (e.g. in Home Assistant dashboards)
+    #environment:
+    #  - GF_AUTH_DISABLE_LOGIN_FORM=true
+    #  - GF_AUTH_ANONYMOUS_ENABLED=true
+    #  - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    #  - GF_SECURITY_ALLOW_EMBEDDING=true
+
+  influxdb:
+    image: "influxdb:1.8"
+    restart: unless-stopped
+    volumes:
+      - "${DATADIR}/influxdb/data:/var/lib/influxdb"
+    healthcheck:
+      test: ["CMD", "curl", "-sI", "http://127.0.0.1:8086/ping"]
+      interval: 30s
+      timeout: 1s
+      retries: 24
+    ports:
+      - 127.0.0.1:8086:8086
+
+  tasmoadmin:
+    image: "raymondmm/tasmoadmin"
+    restart: unless-stopped
+    volumes:
+      - "${DATADIR}/tasmoadmin:/data"
+    ports:
+      - 3080:80
+
+  zigbee2mqtt:
+    image: koenkk/zigbee2mqtt
+    depends_on:
+      mosquitto:
+        condition: service_started
+    restart: unless-stopped
+    ports:
+      - 6080:8080 # if you enabled the web UI
+    volumes:
+      - ${DATADIR}/zigbee2mqtt/data:/app/data
+      - /run/udev:/run/udev:ro
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    environment:
+      - TZ=${TZ}
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "500m"
+
+  zigbee2mqttAssistant:
+    image: carldebilly/zigbee2mqttassistant
+    restart: unless-stopped
+    depends_on:
+      zigbee2mqtt:
+        condition: service_started
+    environment:
+      - Z2MA_SETTINGS__MQTTSERVER=mosquitto
+      - TZ=${TZ}
+    ports:
+      - 8880:80
+
+  homeassistant:
+    container_name: homeassistant
+    restart: unless-stopped
+    image: ghcr.io/home-assistant/home-assistant:stable # or chose any version you like
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    #  - /dev/ttyUSB1:/dev/ttyUSB1
+    #  - /dev/ttyACM0:/dev/ttyACM0
+    volumes:
+      - ${DATADIR}/homeassistant/config:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /dev/serial/by-id/:/dev/serial/by-id/
+    # alternative needed for auto discovery, bluetooth,...
+    network_mode: host
+    privileged: true
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    ports:
+      - 8123:8123
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    labels:
+      # don't automatically update this container as it might break your setup
+      - "com.centurylinklabs.watchtower.enable=false"
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "500m"
+
+
+
+  prometheus:
+    image: prom/prometheus:v2.47.2
+    container_name: prometheus
+    restart: unless-stopped
+    user: ${PUID}:${PGID}
+    ports:
+      - "9090:9090"
+    volumes:
+      - ${DATADIR}/prometheus/etc:/etc/prometheus
+      - ${DATADIR}/prometheus/data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "10m"
+
+  node_exporter:
+    image: prom/node-exporter
+    container_name: node_exporter
+    command:
+      - '--path.rootfs=/host'
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - '/:/host:ro,rslave'
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "10m"
+
+  cadvisor:
+    #image: gcr.io/cadvisor/cadvisor
+    image: zcube/cadvisor:latest
+    container_name: cadvisor
+    command:
+      - "--docker_only=true"
+      - "--housekeeping_interval=30s"
+      - "--disable_metrics=accelerator,cpu_topology,disk,memory_numa,tcp,udp,percpu,sched,process,hugetlb,referenced_memory,resctrl,cpuset,advtcp,memory_numa"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    devices:
+      - /dev/kmsg
+    restart: unless-stopped
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "10m"
+
+  heimdall:
+    image: linuxserver/heimdall
+    container_name: heimdall
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DATADIR}/heimdall:/config
+    ports:
+      - 9080:80
+      - 9443:443
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=${TZ}
+      - WATCHTOWER_CLEANUP=true # deleting old unused images automatically
+      # optional for notifications
+      #- WATCHTOWER_NOTIFICATIONS=email
+      #- WATCHTOWER_NOTIFICATION_EMAIL_FROM=${EMAIL_FROM}
+      #- WATCHTOWER_NOTIFICATION_EMAIL_TO=${WATCHTOWER_EMAIL_TO}
+      #- WATCHTOWER_NOTIFICATION_EMAIL_SERVER=${SMTP_SERVER}
+      #- WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT=${SMTP_PORT}
+      #- WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER=${SMTP_USER}
+      #- WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD=${SMTP_PASSWORD}
+      # alternative for notification via pushover
+      #- WATCHTOWER_NOTIFICATIONS=shoutrrr
+      #- WATCHTOWER_NOTIFICATION_URL=pushover://shoutrrr:${PO_TOKEN}@${PO_USERKEY}
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "200m"
+
+  loki:
+    container_name: loki
+    image: grafana/loki:2.3.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ${DATADIR}/loki/config/loki-config.yaml:/etc/loki/loki-config.yaml
+      - ${DATADIR}/loki/data:/data/loki
+    command: -config.file=/etc/loki/loki-config.yaml
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "200m"
+
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:2.0.6
+    container_name: duplicati
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      #- CLI_ARGS= #optional
+    volumes:
+      - ${DATADIR}/duplicati/config>:/config
+      - ${DATADIR}:/source
+    ports:
+      - 8200:8200
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        max-size: "200m"
